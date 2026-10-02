@@ -9,7 +9,7 @@ from tests.helpers import project_config
 
 
 def make_stats(keyword: str) -> KeywordStats:
-    return KeywordStats(keyword, "budget", 10, 2, 150.5, 9000, 4, 1, "Intuit Inc.", 3, 0, 41.2)
+    return KeywordStats(keyword, "budget", 10, 2, 150.5, 9000, 4, 1, "Intuit Inc.", 3, 0, 41.2, False)
 
 
 KEYWORDS = {"budget app": ["budget"], "budget alarm": ["budget"]}

@@ -30,6 +30,7 @@ class KeywordStats:
     paid_or_iap_count: int
     iap_unknown_count: int
     score: float
+    is_app_name: bool
 
 
 def compile_big_companies(names: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
@@ -42,6 +43,14 @@ def _big_company_name(app: App, patterns: tuple[re.Pattern[str], ...]) -> str | 
         if pattern.search(app.seller) or pattern.search(app.artist):
             return app.seller or app.artist
     return None
+
+
+_DASHES = str.maketrans({"\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"})
+
+
+def _normalize_title(text: str) -> str:
+    """대소문자·대시 종류(– — ‒ −)·띄어쓰기 차이를 무시하고 비교하기 위한 형태."""
+    return " ".join(text.casefold().translate(_DASHES).split())
 
 
 def _review_level(count: float, scale_max: int) -> float:
@@ -96,6 +105,8 @@ def compute_stats(
         paid_or_iap_count=stats["paid_or_iap_count"],
         iap_unknown_count=sum(a.price == 0 and a.track_id in iap and iap[a.track_id] is None for a in apps),
         score=_score(stats, len(apps), rules),
+        # 상위 앱 중 하나의 제목과 똑같으면 일반 검색어가 아니라 그 앱의 이름으로 본다
+        is_app_name=any(_normalize_title(a.name) == _normalize_title(keyword) for a in apps),
     )
 
 

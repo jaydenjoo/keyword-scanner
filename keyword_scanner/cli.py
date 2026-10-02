@@ -81,13 +81,13 @@ def build_table(rows: list[KeywordStats], config: Config) -> tuple[list[str], li
     threshold = config.criteria.low_review_threshold
     monetized = "유료·인앱결제 앱 수" if config.criteria.check_in_app_purchases else "유료 앱 수(인앱 미확인)"
     headers = [
-        "순위", "키워드", "경쟁 점수(낮을수록 약함)", "씨앗", "조회된 앱 수", "제목 포함 앱 수",
+        "순위", "키워드", "앱 이름 같음", "경쟁 점수(낮을수록 약함)", "씨앗", "조회된 앱 수", "제목 포함 앱 수",
         "리뷰 중간값", "리뷰 최대값", f"리뷰 {threshold:,}개 미만 앱 수", "대기업 여부",
         "대기업 앱 수", "대기업 판매자", monetized, "인앱 확인 실패 수",
     ]
     table: list[list[Cell]] = [
         [
-            rank, r.keyword, r.score, r.seeds, r.result_count, r.title_match_count,
+            rank, r.keyword, "예" if r.is_app_name else "아니오", r.score, r.seeds, r.result_count, r.title_match_count,
             r.median_reviews, r.max_reviews, r.low_review_count,
             "예" if r.big_company_count else "아니오", r.big_company_count, r.big_company_names,
             r.paid_or_iap_count, r.iap_unknown_count,

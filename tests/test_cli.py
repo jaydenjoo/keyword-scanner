@@ -80,6 +80,8 @@ class FlowTest(unittest.TestCase):
         headers, table = build_table(rows, self.config)
         self.assertIn("리뷰 1,000개 미만 앱 수", headers)
         self.assertEqual([row[1] for row in table], ["easy", "hard"])
+        self.assertEqual(headers[2], "앱 이름 같음")
+        self.assertEqual([row[2] for row in table], ["아니오", "예"])  # "hard"는 앱 제목과 같음
         self.assertEqual([row[0] for row in table], [1, 2])
         self.assertEqual(len(headers), len(table[0]))
 
