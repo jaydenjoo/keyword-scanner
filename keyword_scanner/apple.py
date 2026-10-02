@@ -123,3 +123,11 @@ class AppleStore:
             log.error("인앱결제 판단 불가 (페이지 모양 변경?): %s", url)
         self._iap_cache[track_id] = result
         return result
+
+    def known_in_app_purchases(self) -> dict[int, bool]:
+        """확인에 성공한 결과만. 실패(None)는 다음 실행에서 다시 확인하도록 뺀다."""
+        return {track_id: value for track_id, value in self._iap_cache.items() if value is not None}
+
+    def preload_in_app_purchases(self, known: dict[int, bool]) -> None:
+        """이어서 할 때 지난번에 확인한 결과를 넣어 같은 앱을 다시 요청하지 않게 한다."""
+        self._iap_cache.update(known)

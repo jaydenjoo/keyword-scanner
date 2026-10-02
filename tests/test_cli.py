@@ -19,6 +19,7 @@ class FakeStore:
         self.hints = hints
         self.apps = apps
         self.iap_checked: list[int] = []
+        self.iap_known: dict[int, bool] = {}
 
     def suggestions(self, term: str):
         return self.hints.get(term, [])
@@ -27,8 +28,16 @@ class FakeStore:
         return self.apps.get(keyword)
 
     def has_in_app_purchases(self, track_id: int):
-        self.iap_checked.append(track_id)
-        return True
+        if track_id not in self.iap_known:
+            self.iap_checked.append(track_id)
+            self.iap_known[track_id] = True
+        return self.iap_known[track_id]
+
+    def known_in_app_purchases(self):
+        return dict(self.iap_known)
+
+    def preload_in_app_purchases(self, known):
+        self.iap_known.update(known)
 
 
 class ReadSeedsTest(unittest.TestCase):
@@ -96,10 +105,10 @@ class FlowTest(unittest.TestCase):
 class InterruptingStore(FakeStore):
     """지정한 키워드를 분석하려는 순간 Ctrl+C가 눌린 것처럼 멈춘다."""
 
-    def __init__(self, interrupt_on: str | None) -> None:
+    def __init__(self, interrupt_on: str | None, price: float = 0.99) -> None:
         super().__init__(
             hints={"budget a": ["budget app", "budget alarm", "budget art"]},
-            apps={k: [App(1, k, "s", "a", 0.99, 5)] for k in ("budget app", "budget alarm", "budget art")},
+            apps={k: [App(1, k, "s", "a", price, 5)] for k in ("budget app", "budget alarm", "budget art")},
         )
         self.interrupt_on = interrupt_on
         self.analyzed: list[str] = []
@@ -153,6 +162,14 @@ class ResumeTest(unittest.TestCase):
         self.assertEqual(second.analyzed, ["budget alarm", "budget art"])
         self.assertEqual(self.excel_keywords(), {"budget app", "budget alarm", "budget art"})
         self.assertFalse(self.progress_file.exists())
+
+    def test_iap_results_are_reused_on_resume(self) -> None:
+        first = InterruptingStore(interrupt_on="budget alarm", price=0.0)
+        self.assertEqual(self.run_main(first), 130)
+        self.assertEqual(first.iap_checked, [1])
+        second = InterruptingStore(interrupt_on=None, price=0.0)
+        self.assertEqual(self.run_main(second), 0)
+        self.assertEqual(second.iap_checked, [])  # 같은 앱(1번)은 다시 확인하지 않음
 
     def test_failed_keyword_is_retried_on_resume(self) -> None:
         first = InterruptingStore(interrupt_on="budget art")

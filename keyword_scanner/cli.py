@@ -130,6 +130,7 @@ def _scan(
     try:
         if saved:
             keywords = saved.keywords
+            store.preload_in_app_purchases(saved.iap)
             log.info("이어서 합니다: 키워드 %d개 중 %d개는 이미 완료 (처음부터 하려면 --fresh)", len(keywords), len(rows))
         else:
             log.info("씨앗 %d개로 자동완성 수집 시작", len(seeds))
@@ -138,11 +139,12 @@ def _scan(
         minutes = (len(keywords) - len(rows)) * per_keyword * config.request.delay_seconds / 60
         log.info("키워드 %d개 분석 시작 (최대 약 %.0f분, 같은 앱은 재확인 안 해서 보통 더 짧음)", len(keywords) - len(rows), minutes)
         done = {r.keyword for r in rows}
-        with progress.open_writer(progress_file, fingerprint, keywords, rows) as writer:
+        iap = saved.iap if saved else {}
+        with progress.open_writer(progress_file, fingerprint, keywords, rows, iap) as writer:
             # 한 줄씩 담아야 중간에 Ctrl+C로 멈추거나 터미널이 닫혀도 그때까지 결과가 남는다
             for stats in analyze(store, keywords, config, rules, done):
                 rows.append(stats)
-                writer.append(stats)
+                writer.append(stats, store.known_in_app_purchases())
     except KeyboardInterrupt:
         log.warning("사용자가 중단함 — 지금까지 결과만 저장합니다. 다시 실행하면 이어서 합니다.")
         return rows, True

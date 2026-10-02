@@ -1,6 +1,7 @@
 """스캔 진행 기록: 키워드 1개 분석이 끝날 때마다 한 줄씩 적어, 끊겨도 다시 실행하면 이어서 한다.
 
 형식(JSON Lines): 1줄째 = 헤더(설정 지문 + 수집한 키워드 목록), 2줄째부터 = 키워드별 결과 1줄씩.
+새로 확인한 인앱결제 결과는 그 결과 줄 바로 앞에 {"iap": {앱 번호: true/false}} 줄로 남긴다.
 """
 
 import dataclasses
@@ -9,7 +10,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
@@ -26,6 +27,7 @@ VERSION = 1
 class Saved:
     keywords: dict[str, list[str]]
     rows: list[KeywordStats]
+    iap: dict[int, bool] = dataclasses.field(default_factory=dict)
 
 
 def progress_path(output: Path) -> Path:
@@ -76,16 +78,29 @@ def load(path: Path, expected_fingerprint: str) -> Saved | None:
 
     keywords: dict[str, list[str]] = header["keywords"]
     rows: dict[str, KeywordStats] = {}
+    iap: dict[int, bool] = {}
     for number, line in enumerate(lines[1:], start=2):
         try:
-            stats = KeywordStats(**json.loads(line))
-        except (json.JSONDecodeError, TypeError):
-            # 강제 종료로 쓰다 만 줄. 이 줄부터는 다시 분석한다.
+            record = json.loads(line)
+            if _is_iap_record(record):
+                iap.update({int(k): v for k, v in record["iap"].items()})
+                continue
+            stats = KeywordStats(**record)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            # 강제 종료로 쓰다 만 줄(또는 손상된 줄). 이 줄부터는 다시 분석한다.
             log.warning("진행 기록 %d번째 줄이 잘려 있어 그 키워드부터 다시 분석합니다.", number)
             break
         if stats.keyword in keywords:
             rows[stats.keyword] = stats
-    return Saved(keywords=keywords, rows=list(rows.values()))
+    return Saved(keywords=keywords, rows=list(rows.values()), iap=iap)
+
+
+def _is_iap_record(record: object) -> bool:
+    if not (isinstance(record, dict) and record.keys() == {"iap"} and isinstance(record["iap"], dict)):
+        return False
+    if all(k.isascii() and k.isdigit() and isinstance(v, bool) for k, v in record["iap"].items()):
+        return True
+    raise TypeError("인앱결제 기록 형식이 잘못됨")
 
 
 def _stats_line(stats: KeywordStats) -> str:
@@ -93,14 +108,22 @@ def _stats_line(stats: KeywordStats) -> str:
     return json.dumps(dataclasses.asdict(stats)) + "\n"
 
 
-class ProgressWriter:
-    def __init__(self, handle: TextIO) -> None:
-        self._handle = handle
+def _iap_line(iap: Mapping[int, bool]) -> str:
+    return json.dumps({"iap": {str(k): v for k, v in iap.items()}}) + "\n" if iap else ""
 
-    def append(self, stats: KeywordStats) -> None:
+
+class ProgressWriter:
+    def __init__(self, handle: TextIO, written_iap: Iterable[int]) -> None:
+        self._handle = handle
+        self._written_iap = set(written_iap)
+
+    def append(self, stats: KeywordStats, iap: Mapping[int, bool | None] | None = None) -> None:
+        """iap: 지금까지 확인한 인앱결제 결과. 아직 안 적은 성공 결과만 골라 결과 줄 앞에 적는다."""
+        new = {k: v for k, v in (iap or {}).items() if isinstance(v, bool) and k not in self._written_iap}
         # flush: 프로그램이 갑자기 죽어도 이미 쓴 줄은 운영체제에 넘어가 남는다
-        self._handle.write(_stats_line(stats))
+        self._handle.write(_iap_line(new) + _stats_line(stats))
         self._handle.flush()
+        self._written_iap.update(new)
 
     def __enter__(self) -> "ProgressWriter":
         return self
@@ -112,7 +135,11 @@ class ProgressWriter:
 
 
 def open_writer(
-    path: Path, fingerprint_value: str, keywords: dict[str, list[str]], rows: Iterable[KeywordStats]
+    path: Path,
+    fingerprint_value: str,
+    keywords: dict[str, list[str]],
+    rows: Iterable[KeywordStats],
+    iap: Mapping[int, bool] | None = None,
 ) -> ProgressWriter:
     """헤더와 이미 끝난 결과를 새로 쓴 뒤(잘린 줄 정리) 이어 쓰기용으로 연다.
 
@@ -124,13 +151,14 @@ def open_writer(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(header) + "\n")
+            handle.write(_iap_line(iap or {}))
             for stats in rows:
                 handle.write(_stats_line(stats))
         os.replace(tmp_name, path)
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)
         raise
-    return ProgressWriter(path.open("a", encoding="utf-8"))
+    return ProgressWriter(path.open("a", encoding="utf-8"), written_iap=iap or {})
 
 
 def remove(path: Path) -> None:
