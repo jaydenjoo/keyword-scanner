@@ -110,6 +110,20 @@ class AppleStoreTest(unittest.TestCase):
         store = AppleStore(FakeClient({}), self.collect)
         self.assertIsNone(store.has_in_app_purchases(7))
 
+    def test_known_iap_excludes_unknown_and_preload_skips_requests(self) -> None:
+        page = b'{"$kind":"Annotation","title":"Ratings"}'
+        store = AppleStore(FakeClient({"apps.apple.com/us/app/id7": page}), self.collect)
+        store.has_in_app_purchases(7)  # 없음
+        store.has_in_app_purchases(8)  # 실패 → 다음 실행에서 다시 확인해야 하므로 저장 대상 아님
+        self.assertEqual(store.known_in_app_purchases(), {7: False})
+
+        client = FakeClient({})
+        resumed = AppleStore(client, self.collect)
+        resumed.preload_in_app_purchases({7: False, 9: True})
+        self.assertFalse(resumed.has_in_app_purchases(7))
+        self.assertTrue(resumed.has_in_app_purchases(9))
+        self.assertEqual(client.urls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,55 @@ class SaveLoadTest(unittest.TestCase):
             progress.load(self.path, "fp1").rows, [make_stats("budget app"), make_stats("budget alarm")]
         )
 
+    def test_iap_results_round_trip(self) -> None:
+        with progress.open_writer(self.path, "fp1", KEYWORDS, []) as writer:
+            writer.append(make_stats("budget app"), {1: True, 2: None})
+            writer.append(make_stats("budget alarm"), {1: True, 3: False})
+        saved = progress.load(self.path, "fp1")
+        self.assertEqual(saved.iap, {1: True, 3: False})  # 확인 실패(None)는 저장 안 함
+        self.assertEqual(len(saved.rows), 2)
+
+        with progress.open_writer(self.path, "fp1", saved.keywords, saved.rows, saved.iap):
+            pass
+        self.assertEqual(progress.load(self.path, "fp1").iap, {1: True, 3: False})
+
+    def test_broken_iap_line_stops_like_a_cut_line(self) -> None:
+        broken_lines = [
+            '{"iap": {"5": "yes"}}',  # 값이 true/false가 아님
+            '{"iap": {"²": true}}',  # 숫자처럼 보이지만 int()가 못 읽는 글자
+            '{"iap": {"١": true}}',  # 아라비아 숫자 1 → 다른 앱 번호로 바뀌면 안 됨
+        ]
+        for broken in broken_lines:
+            with self.subTest(broken=broken):
+                with progress.open_writer(self.path, "fp1", KEYWORDS, []) as writer:
+                    writer.append(make_stats("budget app"), {1: True})
+                with self.path.open("a", encoding="utf-8") as handle:
+                    handle.write(broken + "\n")
+                    handle.write(progress._stats_line(make_stats("budget alarm")))
+                with self.assertLogs("keyword_scanner.progress", "WARNING"):
+                    saved = progress.load(self.path, "fp1")
+                self.assertEqual((saved.iap, [r.keyword for r in saved.rows]), ({1: True}, ["budget app"]))
+
+    def test_iap_kept_when_following_stats_line_is_cut(self) -> None:
+        with progress.open_writer(self.path, "fp1", KEYWORDS, []) as writer:
+            writer.append(make_stats("budget app"), {1: True})
+            writer.append(make_stats("budget alarm"), {2: False})
+        text = self.path.read_text(encoding="utf-8")
+        self.path.write_text(text[: len(text) - 20], encoding="utf-8")  # 마지막 결과 줄만 잘림
+        with self.assertLogs("keyword_scanner.progress", "WARNING"):
+            saved = progress.load(self.path, "fp1")
+        self.assertEqual((saved.iap, [r.keyword for r in saved.rows]), ({1: True, 2: False}, ["budget app"]))
+
+        with progress.open_writer(self.path, "fp1", saved.keywords, saved.rows, saved.iap) as writer:
+            writer.append(make_stats("budget alarm"), {1: True, 2: False})  # 이미 적은 결과는 다시 안 적음
+        self.assertEqual(self.path.read_text(encoding="utf-8").count('"iap"'), 1)
+        self.assertEqual(progress.load(self.path, "fp1").iap, {1: True, 2: False})
+
+    def test_file_without_iap_lines_still_loads(self) -> None:
+        with progress.open_writer(self.path, "fp1", KEYWORDS, []) as writer:
+            writer.append(make_stats("budget app"))
+        self.assertEqual(progress.load(self.path, "fp1").iap, {})
+
     def test_missing_or_other_fingerprint_or_broken_header(self) -> None:
         self.assertIsNone(progress.load(self.path, "fp1"))
         with progress.open_writer(self.path, "fp1", KEYWORDS, []):
