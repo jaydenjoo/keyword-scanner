@@ -1,6 +1,8 @@
 # 실행 결과물
 keywords_result.xlsx
 *.xlsx.tmp
+*.progress.jsonl
+*.progress.tmp
 scan.log
 
 # Python

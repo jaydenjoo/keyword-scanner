@@ -3,9 +3,10 @@
 import argparse
 import logging
 import sys
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 
+from . import progress
 from .apple import AppleStore
 from .config import CollectConfig, Config, ConfigError, load_config
 from .http_client import HttpClient
@@ -53,10 +54,17 @@ def collect_keywords(store: AppleStore, seeds: list[str], collect: CollectConfig
 
 
 def analyze(
-    store: AppleStore, keywords: dict[str, list[str]], config: Config, rules: ScoringRules
+    store: AppleStore,
+    keywords: dict[str, list[str]],
+    config: Config,
+    rules: ScoringRules,
+    done: Collection[str] = frozenset(),
 ) -> Iterator[KeywordStats]:
+    """done: 이미 분석한 키워드(이어서 할 때). 건너뛰되 [번호/전체]는 전체 기준으로 센다."""
     total = len(keywords)
     for index, (keyword, seeds) in enumerate(keywords.items(), start=1):
+        if keyword in done:
+            continue
         apps = store.top_apps(keyword)
         if apps is None:
             continue
@@ -106,7 +114,39 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="설정 파일 (기본: config.toml)")
     parser.add_argument("--seeds", type=Path, help="씨앗 파일 (기본: 설정의 files.seeds)")
     parser.add_argument("--output", type=Path, help="결과 엑셀 (기본: 설정의 files.output)")
+    parser.add_argument("--fresh", action="store_true", help="진행 기록을 무시하고 처음부터 (기본: 끊긴 곳부터 이어서)")
     return parser.parse_args(argv)
+
+
+def _scan(
+    store: AppleStore, seeds: list[str], config: Config, rules: ScoringRules, progress_file: Path, fresh: bool
+) -> tuple[list[KeywordStats], bool]:
+    """(결과, Ctrl+C로 중단됐는지). 키워드마다 진행 기록에 한 줄씩 남겨 끊겨도 이어서 할 수 있게 한다."""
+    fingerprint = progress.fingerprint(seeds, config)
+    if fresh:
+        progress.remove(progress_file)  # 수집 중에 끊겨도 다음 실행이 버린 기록으로 이어서 하지 않게
+    saved = None if fresh else progress.load(progress_file, fingerprint)
+    rows: list[KeywordStats] = list(saved.rows) if saved else []
+    try:
+        if saved:
+            keywords = saved.keywords
+            log.info("이어서 합니다: 키워드 %d개 중 %d개는 이미 완료 (처음부터 하려면 --fresh)", len(keywords), len(rows))
+        else:
+            log.info("씨앗 %d개로 자동완성 수집 시작", len(seeds))
+            keywords = collect_keywords(store, seeds, config.collect)
+        per_keyword = 1 + (config.collect.top_n if config.criteria.check_in_app_purchases else 0)
+        minutes = (len(keywords) - len(rows)) * per_keyword * config.request.delay_seconds / 60
+        log.info("키워드 %d개 분석 시작 (최대 약 %.0f분, 같은 앱은 재확인 안 해서 보통 더 짧음)", len(keywords) - len(rows), minutes)
+        done = {r.keyword for r in rows}
+        with progress.open_writer(progress_file, fingerprint, keywords, rows) as writer:
+            # 한 줄씩 담아야 중간에 Ctrl+C로 멈추거나 터미널이 닫혀도 그때까지 결과가 남는다
+            for stats in analyze(store, keywords, config, rules, done):
+                rows.append(stats)
+                writer.append(stats)
+    except KeyboardInterrupt:
+        log.warning("사용자가 중단함 — 지금까지 결과만 저장합니다. 다시 실행하면 이어서 합니다.")
+        return rows, True
+    return rows, False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,20 +162,8 @@ def main(argv: list[str] | None = None) -> int:
 
     store = AppleStore(HttpClient(config.request), config.collect)
     rules = ScoringRules(config.criteria, config.weights, compile_big_companies(config.big_companies))
-    rows: list[KeywordStats] = []
-    interrupted = False
-    try:
-        log.info("씨앗 %d개로 자동완성 수집 시작", len(seeds))
-        keywords = collect_keywords(store, seeds, config.collect)
-        per_keyword = 1 + (config.collect.top_n if config.criteria.check_in_app_purchases else 0)
-        minutes = len(keywords) * per_keyword * config.request.delay_seconds / 60
-        log.info("키워드 %d개 분석 시작 (최대 약 %.0f분, 같은 앱은 재확인 안 해서 보통 더 짧음)", len(keywords), minutes)
-        # 한 줄씩 담아야 중간에 Ctrl+C로 멈춰도 그때까지 결과가 남는다
-        for stats in analyze(store, keywords, config, rules):
-            rows.append(stats)
-    except KeyboardInterrupt:
-        interrupted = True
-        log.warning("사용자가 중단함 — 지금까지 결과만 저장합니다.")
+    progress_file = progress.progress_path(output)
+    rows, interrupted = _scan(store, seeds, config, rules, progress_file, args.fresh)
 
     if not rows:
         log.error("분석된 키워드가 없어 엑셀을 만들지 않았습니다. 로그 확인: %s", config.log_file)
@@ -143,4 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     headers, table = build_table(rows, config)
     write_xlsx(output, "keywords", headers, table)
     log.info("저장 완료: %s (키워드 %d개)", output, len(rows))
-    return 130 if interrupted else 0
+    if interrupted:
+        return 130
+    progress.remove(progress_file)
+    return 0
