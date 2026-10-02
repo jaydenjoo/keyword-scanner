@@ -46,6 +46,19 @@ class MetricsTest(unittest.TestCase):
     def test_no_results(self) -> None:
         stats = compute_stats("zzz", "s", [], {}, self.rules)
         self.assertEqual((stats.result_count, stats.median_reviews, stats.max_reviews, stats.score), (0, 0, 0, 0.0))
+        self.assertFalse(stats.is_app_name)
+
+    def test_app_name_only_when_title_is_the_same(self) -> None:
+        def flag(keyword: str, *names: str) -> bool:
+            apps = [app(i, name) for i, name in enumerate(names)]
+            return compute_stats(keyword, "s", apps, {}, self.rules).is_app_name
+
+        self.assertTrue(flag("budget vials", "PinPoint", "Budget Vials"))
+        self.assertTrue(flag("budgo - budget on the go", "Budgo – Budget  on the go "))  # 대시·공백 차이 무시
+        self.assertFalse(flag("budget planner", "Fleur - Budget Planner App"))  # 포함만 됨 → 일반 검색어
+        for dash in "\u2012\u2013\u2014\u2212":
+            self.assertTrue(flag("budgo - budget", f"Budgo {dash} Budget"), repr(dash))
+        self.assertFalse(flag("budget", "Budget Pro"))  # 앞부분만 같음
 
     def test_score_range_and_direction(self) -> None:
         weak = [app(i, "other", reviews=10) for i in range(10)]

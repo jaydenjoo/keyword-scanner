@@ -69,7 +69,7 @@ def load(path: Path, expected_fingerprint: str) -> Saved | None:
         log.warning("진행 기록을 읽을 수 없어 처음부터 합니다: %s", path)
         return None
     if header.get("fingerprint") != expected_fingerprint:
-        log.warning("설정이나 씨앗이 바뀌어 처음부터 합니다 (이전 진행 기록은 덮어씀): %s", path)
+        log.warning("설정·씨앗 또는 프로그램 저장 형식이 바뀌어 처음부터 합니다 (이전 진행 기록은 덮어씀): %s", path)
         return None
     if not header["keywords"]:
         return None  # 지난번 자동완성 수집이 통째로 실패함 → 다시 수집
