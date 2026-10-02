@@ -1,0 +1,12 @@
+# 실행 결과물
+keywords_result.xlsx
+*.xlsx.tmp
+scan.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
