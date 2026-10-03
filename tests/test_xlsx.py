@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
-from keyword_scanner.xlsx_writer import _column_letter, write_xlsx
+from keyword_scanner.xlsx_writer import Sheet, _column_letter, write_workbook, write_xlsx
 
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
@@ -39,6 +39,22 @@ class XlsxWriterTest(unittest.TestCase):
     def test_no_temp_file_left(self) -> None:
         write_xlsx(self.path, "s", ["a"], [[1]])
         self.assertEqual([p.name for p in Path(self.tmp.name).iterdir()], ["out.xlsx"])
+
+    def test_writes_several_sheets(self) -> None:
+        write_workbook(self.path, [Sheet("summary", ["a", "b"], [[1, 2]]), Sheet("apps", ["c"], [["x"], ["y"]])])
+        with zipfile.ZipFile(self.path) as zf:
+            for name in zf.namelist():
+                ElementTree.fromstring(zf.read(name))
+            workbook = ElementTree.fromstring(zf.read("xl/workbook.xml"))
+            second = ElementTree.fromstring(zf.read("xl/worksheets/sheet2.xml"))
+            types = zf.read("[Content_Types].xml").decode("utf-8")
+        self.assertEqual([s.get("name") for s in workbook.findall(".//m:sheet", NS)], ["summary", "apps"])
+        self.assertEqual(second.find(".//m:autoFilter", NS).get("ref"), "A1:A3")
+        self.assertIn("/xl/worksheets/sheet2.xml", types)
+
+    def test_rejects_no_sheets(self) -> None:
+        with self.assertRaises(ValueError):
+            write_workbook(self.path, [])
 
 
 if __name__ == "__main__":

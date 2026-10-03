@@ -42,3 +42,23 @@ names = [
   "Disney", "Yahoo", "X Corp", "Dropbox", "Salesforce", "Oracle", "IBM",
   "Tencent", "Alibaba", "Duolingo", "Airbnb", "Pinterest", "LinkedIn",
 ]
+
+# ── 돈 검증 스캐너 (python3 money_check.py) ──
+# 요청 간격·재시도·국가·상위 앱 수·리뷰 기준(low_review_threshold)은 위 설정을 같이 씁니다.
+[money_check]
+input = "keywords_result.xlsx"   # 키워드 스캐너 결과 엑셀 (첫 시트를 읽음)
+output = "money_check.xlsx"      # 결과 엑셀 (요약 시트 + 앱 상세 시트)
+log = "money_check.log"          # 실패·건너뜀 기록
+keyword_column = "키워드"        # 입력 엑셀에서 키워드가 든 열의 머리글
+pass_column = "pass"             # 이 열에 아무 글자나 적힌 키워드만 검사 (머리글 대소문자 무시)
+recent_update_months = 6         # 최근 몇 개월 안에 업데이트했으면 '살아 있는 앱'
+paid_competitor_min = 1          # 유료로 추정되는 앱이 이 수 이상이면 '돈 내는 경쟁자 있음 = 예'
+
+[paid_words]
+# 앱 설명문에 단어 단위로 들어가면 '유료 단어 포함' (대소문자 무시). 가격이 0보다 크거나 이 단어가 있으면 '유료 추정'.
+# "monthly"처럼 무료 앱 설명에도 흔한 단어는 오탐이 많아 넣지 않았습니다.
+words = [
+  "subscription", "subscriptions", "subscribe", "premium", "free trial",
+  "in-app purchase", "in-app purchases", "auto-renew", "auto-renewal", "auto-renewable",
+  "membership", "unlock", "upgrade", "pro version", "per month", "per year",
+]

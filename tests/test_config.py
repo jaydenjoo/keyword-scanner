@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keyword_scanner.config import ConfigError, load_config
+from keyword_scanner.config import ConfigError, load_config, load_money_config
 from tests.helpers import PROJECT_CONFIG
 
 
@@ -65,6 +65,56 @@ class LoadConfigTest(unittest.TestCase):
     def test_iap_switch_off(self) -> None:
         config = self._load_with("check_in_app_purchases = true", "check_in_app_purchases = false")
         self.assertFalse(config.criteria.check_in_app_purchases)
+
+
+class LoadMoneyConfigTest(unittest.TestCase):
+    setUp = LoadConfigTest.setUp
+    tearDown = LoadConfigTest.tearDown
+
+    def _money_with(self, old: str, new: str):
+        self.assertIn(old, self.original)
+        self.path.write_text(self.original.replace(old, new), encoding="utf-8")
+        return load_money_config(self.path)
+
+    def test_project_money_config_is_valid(self) -> None:
+        money = load_money_config(PROJECT_CONFIG)
+        self.assertEqual(money.input_file, PROJECT_CONFIG.parent / "keywords_result.xlsx")
+        self.assertEqual(money.output_file, PROJECT_CONFIG.parent / "money_check.xlsx")
+        self.assertEqual((money.keyword_column, money.pass_column), ("키워드", "pass"))
+        self.assertEqual((money.recent_update_months, money.paid_competitor_min), (6, 1))
+        self.assertIn("subscription", money.paid_words)
+        self.assertEqual(money.base.request.max_retries, 3)
+
+    def test_bad_months_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with("recent_update_months = 6", "recent_update_months = 0")
+
+    def test_months_upper_limit(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with("recent_update_months = 6", "recent_update_months = 121")
+
+    def test_bad_paid_min_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with("paid_competitor_min = 1", "paid_competitor_min = 0")
+        with self.assertRaises(ConfigError):
+            self._money_with("paid_competitor_min = 1", "paid_competitor_min = 11")  # 상위 10개보다 많을 수 없음
+
+    def test_paid_words_deduped_ignoring_case(self) -> None:
+        money = self._money_with('"subscription",', '"subscription", "Subscription ",')
+        self.assertEqual(money.paid_words.count("subscription"), 1)
+        self.assertNotIn("Subscription", money.paid_words)
+
+    def test_missing_paid_words_section_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with("[paid_words]", "[paid_words_old]")
+
+    def test_empty_paid_word_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with('"subscription",', '"subscription", " ",')
+
+    def test_missing_money_section_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self._money_with("[money_check]", "[money_check_old]")
 
 
 if __name__ == "__main__":
