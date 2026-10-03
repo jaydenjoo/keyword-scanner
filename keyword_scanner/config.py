@@ -79,15 +79,18 @@ def _require(condition: bool, message: str) -> None:
         raise ConfigError(message)
 
 
-def load_config(path: Path) -> Config:
-    """config.toml을 읽어 검증된 Config를 돌려준다. 상대 경로는 config 파일 기준."""
+def _read_toml(path: Path) -> dict:
     if not path.is_file():
         raise ConfigError(f"설정 파일을 찾을 수 없습니다: {path}")
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as error:
         raise ConfigError(f"설정 파일 문법 오류: {error}") from error
 
+
+def load_config(path: Path) -> Config:
+    """config.toml을 읽어 검증된 Config를 돌려준다. 상대 경로는 config 파일 기준."""
+    data = _read_toml(path)
     base = path.resolve().parent
     files = _section(data, "files")
     req = _section(data, "request")
@@ -149,4 +152,54 @@ def load_config(path: Path) -> Config:
         criteria=criteria,
         weights=weights,
         big_companies=tuple(n.strip() for n in names),
+    )
+
+
+@dataclass(frozen=True)
+class MoneyConfig:
+    """돈 검증 스캐너 설정. 요청 간격·국가·상위 앱 수·리뷰 기준은 키워드 스캐너 설정(base)을 같이 쓴다."""
+
+    base: Config
+    input_file: Path
+    output_file: Path
+    log_file: Path
+    keyword_column: str
+    pass_column: str
+    recent_update_months: int
+    paid_competitor_min: int
+    paid_words: tuple[str, ...]
+
+
+def load_money_config(path: Path) -> MoneyConfig:
+    """같은 config.toml의 [money_check]·[paid_words]까지 읽어 검증한다."""
+    base_config = load_config(path)
+    data = _read_toml(path)
+    base = path.resolve().parent
+    mc = _section(data, "money_check")
+    words = _section(data, "paid_words")
+
+    def text(key: str) -> str:
+        value = _get(mc, "money_check", key, str).strip()
+        _require(bool(value), f"[money_check] {key}가 비어 있습니다.")
+        return value
+
+    months = _get(mc, "money_check", "recent_update_months", int)
+    _require(1 <= months <= 120, "[money_check] recent_update_months는 1~120 사이여야 합니다.")
+    paid_min = _get(mc, "money_check", "paid_competitor_min", int)
+    top_n = base_config.collect.top_n
+    _require(1 <= paid_min <= top_n, f"[money_check] paid_competitor_min은 1~{top_n}(top_n) 사이여야 합니다.")
+    word_list = _get(words, "paid_words", "words", list)
+    _require(bool(word_list), "[paid_words] words가 비어 있습니다.")
+    _require(all(isinstance(w, str) and w.strip() for w in word_list), "[paid_words] words에 빈 값이 있습니다.")
+
+    return MoneyConfig(
+        base=base_config,
+        input_file=base / text("input"),
+        output_file=base / text("output"),
+        log_file=base / text("log"),
+        keyword_column=text("keyword_column"),
+        pass_column=text("pass_column"),
+        recent_update_months=months,
+        paid_competitor_min=paid_min,
+        paid_words=tuple({w.strip().casefold(): w.strip().casefold() for w in word_list}.values()),
     )

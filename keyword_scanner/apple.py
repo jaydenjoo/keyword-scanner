@@ -75,6 +75,14 @@ def page_has_iap(html: str) -> bool | None:
     return None
 
 
+def search_url(config: CollectConfig, keyword: str) -> str:
+    """검색 API 주소: 미국 스토어(country)의 앱(software) 상위 top_n개."""
+    query = urllib.parse.urlencode(
+        {"term": keyword, "country": config.country, "entity": "software", "limit": config.top_n}
+    )
+    return f"{SEARCH_URL}?{query}"
+
+
 class AppleStore:
     def __init__(self, client: HttpClient, config: CollectConfig) -> None:
         self._client = client
@@ -95,15 +103,7 @@ class AppleStore:
             return None
 
     def top_apps(self, keyword: str) -> list[App] | None:
-        query = urllib.parse.urlencode(
-            {
-                "term": keyword,
-                "country": self._config.country,
-                "entity": "software",
-                "limit": self._config.top_n,
-            }
-        )
-        body = self._client.get(f"{SEARCH_URL}?{query}")
+        body = self._client.get(search_url(self._config, keyword))
         if body is None:
             return None
         try:
