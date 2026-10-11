@@ -72,6 +72,14 @@ class FlowTest(unittest.TestCase):
         keywords = collect_keywords(store, ["budget"], self.config.collect)
         self.assertEqual(keywords, {"budget app": ["budget"], "budget alarm": ["budget"]})
 
+    def test_collect_merges_seeds_that_share_a_keyword(self) -> None:
+        store = FakeStore(
+            hints={"budget a": ["budget app"], "money a": ["Budget App", "money app"]},
+            apps={},
+        )
+        keywords = collect_keywords(store, ["budget", "money"], self.config.collect)
+        self.assertEqual(keywords, {"budget app": ["budget", "money"], "money app": ["money"]})
+
     def test_analyze_skips_failed_and_checks_iap_only_for_free(self) -> None:
         store = FakeStore(
             hints={},
