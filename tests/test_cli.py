@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from keyword_scanner.apple import App
-from keyword_scanner.cli import InputError, analyze, build_table, collect_keywords, main, read_seeds
+from keyword_scanner.cli import InputError, _setup_logging, analyze, build_table, collect_keywords, main, read_seeds
 from keyword_scanner.metrics import ScoringRules, compile_big_companies
 from tests.helpers import PROJECT_CONFIG, project_config
 
@@ -225,3 +225,27 @@ class ResumeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoggingSetupTest(unittest.TestCase):
+    def setUp(self) -> None:
+        root = logging.getLogger()
+        self._saved = (root.handlers[:], root.level)
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        root = logging.getLogger()
+        for handler in root.handlers:
+            if handler not in self._saved[0]:
+                handler.close()
+        root.handlers, root.level = self._saved
+
+    def test_second_setup_closes_previous_log_file(self) -> None:
+        # 한 프로세스에서 여러 번 실행하면 이전 scan.log 파일이 열린 채 남던 문제 (LATER 2026-10-03)
+        with tempfile.TemporaryDirectory() as tmp:
+            _setup_logging(Path(tmp) / "first.log")
+            first = next(h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler))
+            _setup_logging(Path(tmp) / "second.log")
+            self.assertIsNone(first.stream)  # FileHandler.close()가 stream을 비운다
+            for handler in logging.getLogger().handlers:
+                handler.close()
