@@ -1,5 +1,6 @@
 """요청 간격(차단 방지) + 재시도 + 실패 로그를 한 곳에서 처리하는 HTTP 클라이언트."""
 
+import http.client
 import logging
 import time
 import urllib.error
@@ -52,7 +53,8 @@ class HttpClient:
                     log.error("건너뜀 (HTTP %s): %s", error.code, url)
                     return None
                 log.warning("실패 %d/%d (HTTP %s): %s", attempt, attempts, error.code, url)
-            except (urllib.error.URLError, TimeoutError, OSError) as error:
+            # HTTPException: 응답 도중 끊김(IncompleteRead)·깨진 상태줄(BadStatusLine)도 일시 오류로 재시도
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as error:
                 log.warning("실패 %d/%d (%s): %s", attempt, attempts, error, url)
             if attempt < attempts:
                 # 실패할수록 조금 더 쉬었다가 다시 시도

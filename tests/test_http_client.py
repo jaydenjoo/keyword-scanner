@@ -1,3 +1,4 @@
+import http.client
 import io
 import logging
 import unittest
@@ -34,7 +35,20 @@ class FakeOpener:
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
+        if isinstance(outcome, BrokenBody):
+            return outcome
         return io.BytesIO(outcome)
+
+
+class BrokenBody(io.BytesIO):
+    """연결은 됐는데 본문을 읽다가 끊기는 응답."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(b"")
+        self.error = error
+
+    def read(self, *args, **kwargs) -> bytes:
+        raise self.error
 
 
 def http_error(code: int) -> urllib.error.HTTPError:
@@ -63,6 +77,26 @@ class HttpClientTest(unittest.TestCase):
         with self.assertLogs("keyword_scanner.http_client", level=logging.ERROR) as logs:
             self.assertIsNone(client.get("http://x"))
         self.assertEqual(len(opener.calls), 4)  # 첫 시도 1 + 재시도 3
+        self.assertIn("건너뜀", logs.output[-1])
+
+    def test_body_cut_off_mid_read_is_retried(self) -> None:
+        # 실제 사고(2026-11-09): 응답을 읽다가 끊겨 IncompleteRead가 나면 스캔 전체가 멈췄다
+        cut = BrokenBody(http.client.IncompleteRead(b"par", 10))
+        client, opener, _ = self._client([cut, b"ok"])
+        self.assertEqual(client.get("http://x"), b"ok")
+        self.assertEqual(len(opener.calls), 2)
+
+    def test_bad_status_line_is_retried(self) -> None:
+        client, opener, _ = self._client([http.client.BadStatusLine("garbage"), b"ok"])
+        self.assertEqual(client.get("http://x"), b"ok")
+        self.assertEqual(len(opener.calls), 2)
+
+    def test_gives_up_after_repeated_cut_off_bodies(self) -> None:
+        cuts = [BrokenBody(http.client.IncompleteRead(b"", 5)) for _ in range(4)]
+        client, opener, _ = self._client(cuts)
+        with self.assertLogs("keyword_scanner.http_client", level=logging.ERROR) as logs:
+            self.assertIsNone(client.get("http://x"))
+        self.assertEqual(len(opener.calls), 4)
         self.assertIn("건너뜀", logs.output[-1])
 
     def test_404_not_retried(self) -> None:
