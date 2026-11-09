@@ -1,4 +1,6 @@
 import unittest
+from dataclasses import replace
+from datetime import date
 
 from keyword_scanner.apple import App
 from keyword_scanner.metrics import ScoringRules, compile_big_companies, compute_stats, sort_weakest_first
@@ -6,8 +8,9 @@ from tests.helpers import project_config
 
 
 def app(track_id: int, name: str = "x", reviews: int = 0, price: float = 0.0,
-        seller: str = "Indie Dev", artist: str = "Indie Dev") -> App:
-    return App(track_id=track_id, name=name, seller=seller, artist=artist, price=price, rating_count=reviews)
+        seller: str = "Indie Dev", artist: str = "Indie Dev", released: date | None = None) -> App:
+    return App(track_id=track_id, name=name, seller=seller, artist=artist, price=price, rating_count=reviews,
+               release_date=released)
 
 
 class MetricsTest(unittest.TestCase):
@@ -73,6 +76,29 @@ class MetricsTest(unittest.TestCase):
         a = compute_stats("a", "s", [app(1, reviews=100000)], {}, self.rules)
         b = compute_stats("b", "s", [app(1, reviews=10)], {}, self.rules)
         self.assertEqual([r.keyword for r in sort_weakest_first([a, b])], ["b", "a"])
+
+
+class RecentReleaseTest(unittest.TestCase):
+    def setUp(self) -> None:
+        config = project_config()
+        base = ScoringRules(config.criteria, config.weights, compile_big_companies(config.big_companies))
+        self.rules = replace(base, recent_since=date(2024, 11, 9))
+        self.apps = [
+            app(1, released=date(2026, 3, 1)),
+            app(2, released=date(2024, 11, 9)),  # 기준일 당일 = 최근으로 셈
+            app(3, released=date(2024, 11, 8)),
+            app(4, released=None),  # 출시일 모름 = 세지 않음
+        ]
+
+    def test_counts_apps_released_on_or_after_cutoff(self) -> None:
+        self.assertEqual(compute_stats("x", "s", self.apps, {}, self.rules).recent_release_count, 2)
+
+    def test_does_not_change_score(self) -> None:
+        old = [replace(a, release_date=None) for a in self.apps]
+        self.assertEqual(
+            compute_stats("x", "s", self.apps, {}, self.rules).score,
+            compute_stats("x", "s", old, {}, self.rules).score,
+        )
 
 
 if __name__ == "__main__":

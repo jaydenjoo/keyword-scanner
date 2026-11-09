@@ -31,6 +31,7 @@ class CriteriaConfig:
     low_review_threshold: int
     check_in_app_purchases: bool
     review_scale_max: int
+    recent_release_days: int = 730  # 이 기간 안에 출시된 앱을 '최근 출시'로 셈
 
 
 @dataclass(frozen=True)
@@ -123,9 +124,14 @@ def load_config(path: Path) -> Config:
         low_review_threshold=_get(cri, "criteria", "low_review_threshold", int),
         check_in_app_purchases=_get(cri, "criteria", "check_in_app_purchases", bool),
         review_scale_max=_get(cri, "criteria", "review_scale_max", int),
+        # 예전 설정 파일에는 이 값이 없으므로 없으면 기본값(730일)
+        recent_release_days=(
+            _get(cri, "criteria", "recent_release_days", int) if "recent_release_days" in cri else 730
+        ),
     )
     _require(criteria.low_review_threshold > 0, "[criteria] low_review_threshold는 0보다 커야 합니다.")
     _require(criteria.review_scale_max > 0, "[criteria] review_scale_max는 0보다 커야 합니다.")
+    _require(criteria.recent_release_days > 0, "[criteria] recent_release_days는 0보다 커야 합니다.")
 
     weights = ScoreWeights(
         **{

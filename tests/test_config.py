@@ -66,6 +66,15 @@ class LoadConfigTest(unittest.TestCase):
         config = self._load_with("check_in_app_purchases = true", "check_in_app_purchases = false")
         self.assertFalse(config.criteria.check_in_app_purchases)
 
+    def test_recent_release_days_defaults_when_missing(self) -> None:
+        config = self._load_with("recent_release_days = 730", "")
+        self.assertEqual(config.criteria.recent_release_days, 730)
+
+    def test_recent_release_days_must_be_positive(self) -> None:
+        for bad in ("0", "-5", "true"):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                self._load_with("recent_release_days = 730", f"recent_release_days = {bad}")
+
 
 if __name__ == "__main__":
     unittest.main()

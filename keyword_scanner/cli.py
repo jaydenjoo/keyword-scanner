@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 from collections.abc import Collection, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import progress
@@ -84,13 +85,14 @@ def build_table(rows: list[KeywordStats], config: Config) -> tuple[list[str], li
         "순위", "키워드", "앱 이름 같음", "경쟁 점수(낮을수록 약함)", "씨앗", "조회된 앱 수", "제목 포함 앱 수",
         "리뷰 중간값", "리뷰 최대값", f"리뷰 {threshold:,}개 미만 앱 수", "대기업 여부",
         "대기업 앱 수", "대기업 판매자", monetized, "인앱 확인 실패 수",
+        f"최근 {config.criteria.recent_release_days:,}일 안에 출시된 앱 수",
     ]
     table: list[list[Cell]] = [
         [
             rank, r.keyword, "예" if r.is_app_name else "아니오", r.score, r.seeds, r.result_count, r.title_match_count,
             r.median_reviews, r.max_reviews, r.low_review_count,
             "예" if r.big_company_count else "아니오", r.big_company_count, r.big_company_names,
-            r.paid_or_iap_count, r.iap_unknown_count,
+            r.paid_or_iap_count, r.iap_unknown_count, r.recent_release_count,
         ]
         for rank, r in enumerate(sort_weakest_first(rows), start=1)
     ]
@@ -163,7 +165,10 @@ def main(argv: list[str] | None = None) -> int:
     _setup_logging(config.log_file)
 
     store = AppleStore(HttpClient(config.request), config.collect)
-    rules = ScoringRules(config.criteria, config.weights, compile_big_companies(config.big_companies))
+    recent_since = datetime.now(UTC).date() - timedelta(days=config.criteria.recent_release_days)
+    rules = ScoringRules(
+        config.criteria, config.weights, compile_big_companies(config.big_companies), recent_since=recent_since
+    )
     progress_file = progress.progress_path(output)
     rows, interrupted = _scan(store, seeds, config, rules, progress_file, args.fresh)
 
