@@ -6,6 +6,7 @@ import plistlib
 import re
 import urllib.parse
 from dataclasses import dataclass
+from datetime import date
 
 from .config import CollectConfig
 from .http_client import HttpClient
@@ -29,6 +30,7 @@ class App:
     artist: str
     price: float
     rating_count: int
+    release_date: date | None = None  # 처음 출시일. 모르면 None
 
 
 def parse_hints(body: bytes) -> list[str]:
@@ -43,6 +45,16 @@ def _to_number(value: object, kind: type) -> int | float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return kind(value)
     return kind(0)
+
+
+def _to_date(value: object) -> date | None:
+    """"2025-12-08T08:00:00Z" → date(2025, 12, 8). 형식이 다르면 None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 def parse_search(body: bytes) -> list[App]:
@@ -61,6 +73,7 @@ def parse_search(body: bytes) -> list[App]:
                 artist=str(item.get("artistName", "")),
                 price=_to_number(item.get("price"), float),
                 rating_count=_to_number(item.get("userRatingCount"), int),
+                release_date=_to_date(item.get("releaseDate")),
             )
         )
     return apps

@@ -4,6 +4,7 @@ import math
 import re
 import statistics
 from dataclasses import dataclass
+from datetime import date
 
 from .apple import App
 from .config import CriteriaConfig, ScoreWeights
@@ -14,6 +15,7 @@ class ScoringRules:
     criteria: CriteriaConfig
     weights: ScoreWeights
     big_company_patterns: tuple[re.Pattern[str], ...]
+    recent_since: date | None = None  # 이 날짜 이후(당일 포함) 출시 = 최근 출시. None이면 세지 않음
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class KeywordStats:
     iap_unknown_count: int
     score: float
     is_app_name: bool
+    recent_release_count: int
 
 
 def compile_big_companies(names: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
@@ -107,7 +110,15 @@ def compute_stats(
         score=_score(stats, len(apps), rules),
         # 상위 앱 중 하나의 제목과 똑같으면 일반 검색어가 아니라 그 앱의 이름으로 본다
         is_app_name=any(_normalize_title(a.name) == _normalize_title(keyword) for a in apps),
+        # 점수에는 넣지 않는다: 신규 앱이 몰렸는지 따로 보기 위한 숫자
+        recent_release_count=_recent_count(apps, rules.recent_since),
     )
+
+
+def _recent_count(apps: list[App], since: date | None) -> int:
+    if since is None:
+        return 0
+    return sum(a.release_date is not None and a.release_date >= since for a in apps)
 
 
 def sort_weakest_first(rows: list[KeywordStats]) -> list[KeywordStats]:

@@ -1,4 +1,5 @@
 import json
+from datetime import date
 import plistlib
 import unittest
 
@@ -22,8 +23,9 @@ SEARCH_BODY = json.dumps(
         "resultCount": 3,
         "results": [
             {"trackId": 1, "trackName": "Budget App", "sellerName": "A LLC", "artistName": "A",
-             "price": 0.0, "userRatingCount": 1500},
-            {"trackId": 2, "trackName": "Money", "sellerName": "B", "artistName": "B", "price": 2.99},
+             "price": 0.0, "userRatingCount": 1500, "releaseDate": "2025-12-08T08:00:00Z"},
+            {"trackId": 2, "trackName": "Money", "sellerName": "B", "artistName": "B", "price": 2.99,
+             "releaseDate": "not a date"},
             {"trackName": "no id"},
         ],
     }
@@ -43,6 +45,11 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(apps[0].rating_count, 1500)
         self.assertEqual(apps[1].rating_count, 0)  # 리뷰 수 없음 → 0
         self.assertEqual(apps[1].price, 2.99)
+
+    def test_parse_search_release_date(self) -> None:
+        apps = parse_search(SEARCH_BODY)
+        self.assertEqual(apps[0].release_date, date(2025, 12, 8))
+        self.assertIsNone(apps[1].release_date)  # 형식이 깨진 출시일 → 모름(None)
 
     def test_parse_search_invalid_json(self) -> None:
         with self.assertRaises(ValueError):

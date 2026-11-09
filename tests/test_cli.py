@@ -101,6 +101,7 @@ class FlowTest(unittest.TestCase):
         self.assertEqual([row[2] for row in table], ["아니오", "예"])  # "hard"는 앱 제목과 같음
         self.assertEqual([row[0] for row in table], [1, 2])
         self.assertEqual(len(headers), len(table[0]))
+        self.assertEqual(headers[-1], "최근 730일 안에 출시된 앱 수")
 
     def test_analyze_skips_done_keeping_numbering(self) -> None:
         store = FakeStore(hints={}, apps={k: [App(1, k, "s", "a", 1.0, 5)] for k in ("a", "b", "c")})

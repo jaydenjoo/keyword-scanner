@@ -23,6 +23,7 @@ top_n = 10                                      # 키워드마다 조회할 상�
 low_review_threshold = 1000     # 리뷰가 이 수 미만이면 '약한 앱'
 check_in_app_purchases = true   # true = 앱 상세 페이지로 인앱결제 확인(정확, 느림) / false = 유료 앱만 셈(빠름)
 review_scale_max = 100000       # 점수 계산 시 리뷰가 이 수 이상이면 '최강'으로 간주
+recent_release_days = 730       # 이 기간(일) 안에 처음 출시된 앱을 "최근 출시"로 셈 (결과 맨 끝 열, 점수에는 안 들어감)
 
 # 경쟁 점수(0~100, 낮을수록 경쟁 약함) 계산 가중치. 0이면 해당 항목 무시.
 [score_weights]
