@@ -106,6 +106,9 @@ def _setup_logging(log_file: Path) -> None:
     console.setFormatter(logging.Formatter("%(message)s"))
     root = logging.getLogger()
     root.setLevel(logging.INFO)
+    for old in root.handlers:
+        if isinstance(old, logging.FileHandler):
+            old.close()  # 이전 실행의 로그 파일을 열어 둔 채 버리지 않는다
     root.handlers = [file_handler, console]
 
 
