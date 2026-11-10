@@ -1,4 +1,4 @@
-"""외부 패키지 없이 단순한 .xlsx(시트 1개, 굵은 머리글, 틀 고정, 필터)를 만든다.
+"""외부 패키지 없이 단순한 .xlsx(시트 1개 이상, 굵은 머리글, 틀 고정, 필터)를 만든다.
 
 xlsx는 XML 파일 몇 개를 zip으로 묶은 형식이라 표준 라이브러리만으로 쓸 수 있다.
 """
@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -20,9 +21,13 @@ _CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+{sheets}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>"""
+_SHEET_TYPE = (
+    '<Override PartName="/xl/worksheets/sheet{n}.xml" '
+    'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+)
 
 _ROOT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -31,9 +36,13 @@ _ROOT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 _WORKBOOK_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+{sheets}
+<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>"""
+_SHEET_REL = (
+    '<Relationship Id="rId{n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+    'Target="worksheets/sheet{n}.xml"/>'
+)
 
 # 스타일 0 = 기본, 1 = 굵게(머리글)
 _STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -85,29 +94,52 @@ def _sheet_xml(headers: list[str], rows: list[list[Cell]], widths: list[int]) ->
     )
 
 
-def _workbook_xml(sheet_name: str) -> str:
-    name = escape(sheet_name, {'"': "&quot;"})
+@dataclass(frozen=True)
+class Sheet:
+    name: str
+    headers: list[str]
+    rows: list[list[Cell]]
+
+
+def _workbook_xml(sheet_names: list[str]) -> str:
+    names = [escape(name, {'"': "&quot;"}) for name in sheet_names]
+    sheets = "".join(
+        f'<sheet name="{name}" sheetId="{n}" r:id="rId{n}"/>' for n, name in enumerate(names, start=1)
+    )
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'<sheets><sheet name="{name}" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        f"<sheets>{sheets}</sheets></workbook>"
     )
 
 
-def write_xlsx(path: Path, sheet_name: str, headers: list[str], rows: list[list[Cell]]) -> None:
-    """임시 파일에 다 쓴 뒤 바꿔치기해서, 중간에 실패해도 기존 결과 파일이 깨지지 않게 한다."""
-    widths = [
+def _widths(headers: list[str], rows: list[list[Cell]]) -> list[int]:
+    return [
         min(60, max(8, *(len(str(row[i])) + 2 for row in [headers, *rows])))
         for i in range(len(headers))
     ]
+
+
+def write_xlsx(path: Path, sheet_name: str, headers: list[str], rows: list[list[Cell]]) -> None:
+    write_workbook(path, [Sheet(sheet_name, headers, rows)])
+
+
+def write_workbook(path: Path, sheets: list[Sheet]) -> None:
+    """임시 파일에 다 쓴 뒤 바꿔치기해서, 중간에 실패해도 기존 결과 파일이 깨지지 않게 한다."""
+    if not sheets:
+        raise ValueError("시트가 하나 이상 있어야 합니다.")
+    numbers = range(1, len(sheets) + 1)
     parts = {
-        "[Content_Types].xml": _CONTENT_TYPES,
+        "[Content_Types].xml": _CONTENT_TYPES.format(sheets="\n".join(_SHEET_TYPE.format(n=n) for n in numbers)),
         "_rels/.rels": _ROOT_RELS,
-        "xl/workbook.xml": _workbook_xml(sheet_name),
-        "xl/_rels/workbook.xml.rels": _WORKBOOK_RELS,
+        "xl/workbook.xml": _workbook_xml([sheet.name for sheet in sheets]),
+        "xl/_rels/workbook.xml.rels": _WORKBOOK_RELS.format(sheets="\n".join(_SHEET_REL.format(n=n) for n in numbers)),
         "xl/styles.xml": _STYLES,
-        "xl/worksheets/sheet1.xml": _sheet_xml(headers, rows, widths),
+        **{
+            f"xl/worksheets/sheet{n}.xml": _sheet_xml(sheet.headers, sheet.rows, _widths(sheet.headers, sheet.rows))
+            for n, sheet in zip(numbers, sheets)
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(suffix=".xlsx.tmp", dir=path.parent)
