@@ -7,12 +7,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from . import money_progress, progress
 from .apple import search_url
 from .cli import DEFAULT_CONFIG, InputError, _setup_logging
 from .config import ConfigError, MoneyConfig, load_money_config
 from .http_client import HttpClient
 from .money import (
     KeywordMoney,
+    MoneyApp,
     MoneyRules,
     PaidPatterns,
     compile_paid_words,
@@ -127,7 +129,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="설정 파일 (기본: config.toml)")
     parser.add_argument("--input", type=Path, help="입력 엑셀 (기본: 설정의 money_check.input)")
     parser.add_argument("--output", type=Path, help="결과 엑셀 (기본: 설정의 money_check.output)")
+    parser.add_argument("--fresh", action="store_true", help="진행 기록을 무시하고 처음부터 (기본: 끊긴 곳부터 이어서)")
     return parser.parse_args(argv)
+
+
+def _load_done(
+    progress_file: Path, fingerprint: str, keywords: list[str], today: date, fresh: bool
+) -> dict[str, tuple[MoneyApp, ...]]:
+    """이어서 할 키워드 → 앱 원자료. --fresh 이거나 기록을 못 쓰면 빈 결과."""
+    if fresh:
+        progress.remove(progress_file)  # 검사 중에 끊겨도 다음 실행이 버린 기록으로 이어서 하지 않게
+        return {}
+    done = money_progress.load(progress_file, fingerprint, keywords, today) or {}
+    if done:
+        log.info("이어서 합니다: 키워드 %d개 중 %d개는 이미 완료 (처음부터 하려면 --fresh)", len(keywords), len(done))
+    return done
 
 
 def main(argv: list[str] | None = None, today: date | None = None) -> int:
@@ -142,31 +158,40 @@ def main(argv: list[str] | None = None, today: date | None = None) -> int:
     output = args.output or config.output_file
     _setup_logging(config.log_file)
 
+    day = today or date.today()  # '최근 업데이트' 기준일, 진행 기록의 날짜 (기존과 같은 컴퓨터 날짜)
     client = HttpClient(config.base.request)
     paid = compile_paid_words(config.paid_words)
     rules = MoneyRules(
         low_review_threshold=config.base.criteria.low_review_threshold,
-        recent_since=months_ago(today or date.today(), config.recent_update_months),
+        recent_since=months_ago(day, config.recent_update_months),
         paid_competitor_min=config.paid_competitor_min,
     )
-    seconds = round(len(keywords) * config.base.request.delay_seconds)
-    log.info("pass 키워드 %d개 검사 시작 (약 %d분 %d초)", len(keywords), seconds // 60, seconds % 60)
-    results: list[KeywordMoney] = []
+    progress_file = progress.progress_path(output)
+    fingerprint = money_progress.fingerprint(keywords, config)
+    found = _load_done(progress_file, fingerprint, keywords, day, args.fresh)
+    todo = [keyword for keyword in keywords if keyword not in found]
+    seconds = round(len(todo) * config.base.request.delay_seconds)
+    log.info("pass 키워드 %d개 검사 시작 (약 %d분 %d초)", len(todo), seconds // 60, seconds % 60)
     skipped = 0
     interrupted = False
     try:
-        for index, keyword in enumerate(keywords, start=1):
-            result = check_keyword(client, config, keyword, paid, rules)
-            if result is None:
-                skipped += 1
-                continue
-            results.append(result)
-            log.info("[%d/%d] %s — 유료 추정 %d개, 살아 있는 경쟁자 %d개",
-                     index, len(keywords), keyword, result.paid_count, result.live_competitor_count)
+        with money_progress.open_writer(progress_file, fingerprint, day, found) as writer:
+            for index, keyword in enumerate(todo, start=1):
+                result = check_keyword(client, config, keyword, paid, rules)
+                if result is None:
+                    skipped += 1
+                    continue
+                # 이번 엑셀에 먼저 담고, 한 줄씩 남겨야 Ctrl+C·터미널 닫힘 뒤에도 다시 실행할 때 이어서 한다
+                found[keyword] = result.apps
+                writer.append(keyword, result.apps)
+                log.info("[%d/%d] %s — 유료 추정 %d개, 살아 있는 경쟁자 %d개",
+                         index, len(todo), keyword, result.paid_count, result.live_competitor_count)
     except KeyboardInterrupt:
-        log.warning("사용자가 중단함 — 지금까지 결과만 저장합니다.")
+        log.warning("사용자가 중단함 — 지금까지 결과만 저장합니다. 다시 실행하면 이어서 합니다.")
         interrupted = True
 
+    # 이어서 한 결과도 '최근 업데이트' 기준은 오늘 날짜로 다시 계산한다. 순서는 입력 엑셀 순서.
+    results = [summarize(keyword, list(found[keyword]), rules) for keyword in keywords if keyword in found]
     if not results:
         log.error("검사된 키워드가 없어 엑셀을 만들지 않았습니다. 로그 확인: %s", config.log_file)
         return 130 if interrupted else 1
@@ -174,4 +199,10 @@ def main(argv: list[str] | None = None, today: date | None = None) -> int:
     back_up(output)
     write_workbook(output, build_sheets(results, config, notes))
     log.info("저장 완료: %s (키워드 %d개, 실패로 건너뜀 %d개)", output, len(results), skipped)
-    return 130 if interrupted else 0
+    if interrupted:
+        return 130
+    if skipped:
+        log.info("실패한 키워드 %d개는 다시 실행하면 그것만 다시 검사합니다 (처음부터 하려면 --fresh)", skipped)
+    else:
+        progress.remove(progress_file)
+    return 0

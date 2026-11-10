@@ -163,6 +163,48 @@ class MoneyCliTest(unittest.TestCase):
         self.assertEqual(self.run_main(client), 130)
         self.assertEqual([row[0] for row in read_sheet(self.output)], ["키워드", "budget app"])
 
+    @property
+    def progress_file(self) -> Path:
+        return self.dir / "money_check.progress.jsonl"
+
+    def test_resume_after_interrupt_skips_done_keywords(self) -> None:
+        first = self.default_client()
+        first.interrupt_on = "habit"
+        self.assertEqual(self.run_main(first), 130)
+        self.assertTrue(self.progress_file.exists())
+
+        second = self.default_client()
+        self.assertEqual(self.run_main(second), 0)
+        self.assertEqual(second.terms, ["broken", "habit"])  # 'budget app' 은 다시 요청하지 않음
+        self.assertEqual([row[0] for row in read_sheet(self.output)], ["키워드", "budget app", "habit"])
+        self.assertEqual(read_sheet(self.output)[1][:7], ["budget app", "2", "2", "1", "1", "예", "1"])
+        self.assertIn("이어서 합니다", self.log_file.read_text(encoding="utf-8"))
+
+    def test_failed_keyword_is_retried_and_record_removed_when_all_done(self) -> None:
+        self.assertEqual(self.run_main(self.default_client()), 0)
+        self.assertTrue(self.progress_file.exists())  # 'broken' 이 실패해서 남겨 둠
+
+        retry = self.default_client()
+        retry.bodies["broken"] = search_body(app(9))
+        self.assertEqual(self.run_main(retry), 0)
+        self.assertEqual(retry.terms, ["broken"])
+        self.assertEqual([row[0] for row in read_sheet(self.output)], ["키워드", "budget app", "broken", "habit"])
+        self.assertFalse(self.progress_file.exists())
+
+    def test_fresh_ignores_record(self) -> None:
+        self.run_main(self.default_client())
+        again = self.default_client()
+        self.run_main(again, "--fresh")
+        self.assertEqual(again.terms, ["budget app", "broken", "habit"])
+
+    def test_changed_paid_words_start_over(self) -> None:
+        self.run_main(self.default_client())
+        text = self.config_path.read_text(encoding="utf-8")
+        self.config_path.write_text(text.replace('"subscription", ', "", 1), encoding="utf-8")
+        again = self.default_client()
+        self.run_main(again)
+        self.assertEqual(again.terms, ["budget app", "broken", "habit"])
+
     def test_output_option(self) -> None:
         other = self.dir / "other.xlsx"
         self.assertEqual(self.run_main(self.default_client(), "--output", str(other)), 0)
