@@ -29,6 +29,7 @@ from .xlsx_writer import Cell, Sheet, write_workbook
 log = logging.getLogger("keyword_scanner.money")
 
 MANUAL_COLUMNS = ["리뷰 불만 반복", "Reddit 불만"]  # 사람이 직접 채우는 열 (빈칸으로 만듦)
+UNCHECKED = "미검사"  # 중단·실패로 이번에 검사하지 못한 키워드 (줄을 남겨 메모를 지킨다)
 
 
 def _yes_no(value: bool) -> str:
@@ -54,8 +55,12 @@ def load_manual_notes(path: Path) -> dict[str, list[str]]:
         return {}
     header = [" ".join(cell.split()) for cell in rows[0]] if rows else []
     if "키워드" not in header:
+        log.warning("지난 결과의 첫 시트에 '키워드' 열이 없어 직접 입력 열을 옮기지 못함 — 백업 파일에만 남습니다.")
         return {}
     keyword_index = header.index("키워드")
+    missing = [name for name in MANUAL_COLUMNS if name not in header]
+    if missing:
+        log.warning("지난 결과에 직접 입력 열 %s 이(가) 없어 그 열의 메모는 백업 파일에만 남습니다.", ", ".join(missing))
     indexes = [header.index(name) if name in header else None for name in MANUAL_COLUMNS]
     notes: dict[str, list[str]] = {}
     for row in rows[1:]:
@@ -66,11 +71,15 @@ def load_manual_notes(path: Path) -> dict[str, list[str]]:
     return notes
 
 
+def _backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.bak{path.suffix}")
+
+
 def back_up(path: Path) -> None:
     """덮어쓰기 전에 지난 결과를 <이름>.bak.xlsx 로 복사해 둔다(직접 적은 메모 보호)."""
     if not path.is_file():
         return
-    backup = path.with_name(f"{path.stem}.bak{path.suffix}")
+    backup = _backup_path(path)
     shutil.copy2(path, backup)
     log.info("지난 결과를 백업함: %s", backup)
 
@@ -92,23 +101,26 @@ def check_keyword(
 
 
 def build_sheets(
-    results: list[KeywordMoney], config: MoneyConfig, notes: dict[str, list[str]] | None = None
+    keywords: list[str], results: list[KeywordMoney], config: MoneyConfig, notes: dict[str, list[str]] | None = None
 ) -> list[Sheet]:
-    """notes: 키워드 → 직접 입력 열 값(지난 결과에서 옮겨 담음). 없으면 빈칸."""
+    """summary 는 pass 키워드마다 한 줄(입력 순서). 결과가 없는 키워드는 '미검사' 줄.
+    notes: 키워드 → 직접 입력 열 값(지난 결과에서 옮겨 담음). 없으면 빈칸."""
     notes = notes or {}
     blank = [""] * len(MANUAL_COLUMNS)
+    by_keyword = {r.keyword: r for r in results}
     threshold = config.base.criteria.low_review_threshold
     summary_headers = [
         "키워드", "조회된 앱 수", "유료 추정 앱 수", f"최근 {config.recent_update_months}개월 업데이트 앱 수",
         f"리뷰 {threshold:,}개 미만 앱 수", "돈 내는 경쟁자 있음", "살아 있는 경쟁자 수", *MANUAL_COLUMNS,
     ]
-    summary: list[list[Cell]] = [
-        [
-            r.keyword, len(r.apps), r.paid_count, r.recent_update_count, r.low_review_count,
-            _yes_no(r.has_paying_competitor), r.live_competitor_count, *notes.get(_key(r.keyword), blank),
+    summary: list[list[Cell]] = []
+    for keyword in keywords:
+        r = by_keyword.get(keyword)
+        metrics: list[Cell] = [UNCHECKED, "", "", "", "", ""] if r is None else [
+            len(r.apps), r.paid_count, r.recent_update_count, r.low_review_count,
+            _yes_no(r.has_paying_competitor), r.live_competitor_count,
         ]
-        for r in results
-    ]
+        summary.append([keyword, *metrics, *notes.get(_key(keyword), blank)])
     detail_headers = [
         "키워드", "순위", "앱 이름", "판매자", "가격", "평점 수", "평균 평점", "출시일", "최근 업데이트일",
         "유료 단어 포함", "찾은 유료 단어", "유료 추정",
@@ -196,9 +208,14 @@ def main(argv: list[str] | None = None, today: date | None = None) -> int:
         log.error("검사된 키워드가 없어 엑셀을 만들지 않았습니다. 로그 확인: %s", config.log_file)
         return 130 if interrupted else 1
     notes = load_manual_notes(output)
+    listed = {_key(keyword) for keyword in keywords}
+    dropped = [keyword for keyword in notes if keyword not in listed]
+    if dropped:
+        log.warning("pass 목록에 없는 키워드 %d개의 직접 입력 메모는 %s 에만 남습니다: %s",
+                    len(dropped), _backup_path(output).name, ", ".join(dropped))
     back_up(output)
-    write_workbook(output, build_sheets(results, config, notes))
-    log.info("저장 완료: %s (키워드 %d개, 실패로 건너뜀 %d개)", output, len(results), skipped)
+    write_workbook(output, build_sheets(keywords, results, config, notes))
+    log.info("저장 완료: %s (검사한 키워드 %d개, 미검사 %d개)", output, len(results), len(keywords) - len(results))
     if interrupted:
         return 130
     if skipped:
